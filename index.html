@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Trip Animator</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+
+    .travel-icon svg { width: 34px; height: 34px; display:block; }
+    .travel-icon { filter: drop-shadow(0 2px 3px rgba(0,0,0,0.35)); }
+
+    .pin svg { width: 32px; height: 32px; display:block; }
+    .pin { filter: drop-shadow(0 2px 3px rgba(0,0,0,0.35)); }
+
+    .wp-label {
+      font: 13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: rgba(0,0,0,0.65);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.15);
+      white-space: nowrap;
+    }
+
+    .fade-out { opacity: 1; will-change: opacity; }
+    .fade-out.hidden { opacity: 0; }
+
+    .rot { transform-origin: 50% 50%; will-change: transform; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script>
+    // =========================
+    // CONFIG
+    // =========================
+    const TRAVELLOG_URL = './travellog.json';
+    const PAN_DURATION_SEC = 0.35;
+    const LINE_WEIGHT = 4;
+
+    // Rotate ONLY for flights
+    const ROTATE_FLIGHTS = true;
+
+    // =========================
+    // SVG ICONS (use currentColor so we can color them via CSS)
+    // NOTE: These are simple icons; all are filled with currentColor.
+    // =========================
+    const svgs = {
+      fly: `
+        <svg class="rot" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M30 6c0-1.7 1.3-3 3-3s3 1.3 3 3v16l17 7c1.2.5 2 1.7 2 3v2l-19-3v12l7 4c.6.3 1 1 1 1.7V52l-12-3-12 3v-2.3c0-.7.4-1.4 1-1.7l7-4V31l-19 3v-2c0-1.3.8-2.5 2-3l17-7V6z"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+      `,
+      car: `
+        <svg class="rot" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M14 38l4-14c1-4 4-6 8-6h12c4 0 7 2 8 6l4 14"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2"/>
+          <rect x="10" y="30" width="44" height="16" rx="6"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2"/>
+          <circle cx="20" cy="48" r="4" fill="black" fill-opacity="0.65"/>
+          <circle cx="44" cy="48" r="4" fill="black" fill-opacity="0.65"/>
+        </svg>
+      `,
+      train: `
+        <svg class="rot" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="18" y="10" width="28" height="34" rx="8"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2"/>
+          <rect x="22" y="16" width="20" height="10" rx="2" fill="black" fill-opacity="0.18"/>
+          <circle cx="26" cy="44" r="3.5" fill="black" fill-opacity="0.65"/>
+          <circle cx="38" cy="44" r="3.5" fill="black" fill-opacity="0.65"/>
+          <path d="M22 54h20" stroke="white" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+      `,
+      // new: bus
+      bus: `
+        <svg class="rot" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="16" y="8" width="32" height="42" rx="8"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2"/>
+          <rect x="20" y="14" width="24" height="14" rx="2" fill="black" fill-opacity="0.18"/>
+          <circle cx="24" cy="50" r="4" fill="black" fill-opacity="0.65"/>
+          <circle cx="40" cy="50" r="4" fill="black" fill-opacity="0.65"/>
+          <path d="M20 34h24" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+        </svg>
+      `,
+      // new: taxi (car with checker line)
+      taxi: `
+        <svg class="rot" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M14 38l4-14c1-4 4-6 8-6h12c4 0 7 2 8 6l4 14"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2"/>
+          <rect x="10" y="30" width="44" height="16" rx="6"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2"/>
+          <path d="M18 34h28" stroke="black" stroke-opacity="0.35" stroke-width="3" stroke-dasharray="4 4"/>
+          <circle cx="20" cy="48" r="4" fill="black" fill-opacity="0.65"/>
+          <circle cx="44" cy="48" r="4" fill="black" fill-opacity="0.65"/>
+        </svg>
+      `,
+      // new: walking (simple person)
+      walking: `
+        <svg class="rot" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="34" cy="12" r="5" fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2"/>
+          <path d="M30 22l8 6-4 8 6 6" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M34 28l-10 10" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+          <path d="M28 40l-6 12" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+          <path d="M38 40l6 12" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+          <path d="M30 22l8 6" fill="none" stroke="black" stroke-opacity="0.25" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      `,
+      // new: boat (small boat icon)
+      boat: `
+        <svg class="rot" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M18 28h28l-4 16H22l-4-16z"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M32 14v14" stroke="black" stroke-opacity="0.25" stroke-width="2" stroke-linecap="round"/>
+          <path d="M32 16l10 6H32" fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M14 48c6 6 30 6 36 0" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+      `,
+      // new: ferry (boat with cabin)
+      ferry: `
+        <svg class="rot" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="24" y="16" width="16" height="10" rx="2"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2"/>
+          <rect x="20" y="26" width="24" height="8" rx="2"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2"/>
+          <path d="M18 34h28l-4 14H22l-4-14z"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M14 50c6 6 30 6 36 0" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+      `,
+      // pin (waypoint)
+      pin: `
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M32 58s18-16 18-30a18 18 0 1 0-36 0c0 14 18 30 18 30z"
+                fill="currentColor" stroke="black" stroke-opacity="0.25" stroke-width="2"/>
+          <circle cx="32" cy="28" r="6" fill="black" fill-opacity="0.25"/>
+        </svg>
+      `
+    };
+
+    // Aliases: ferry and boat can share icon styles if you want
+    // (they already have distinct icons above)
+
+    function makeTravelIcon(type, color = "#ffffff") {
+      const svg = svgs[type] || svgs.car;
+      return L.divIcon({
+        className: 'travel-icon',
+        html: `<div class="travel-icon" style="color:${color}">${svg}</div>`,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17]
+      });
+    }
+
+    function makePinIcon(color = "#ffffff") {
+      return L.divIcon({
+        className: 'pin fade-out',
+        html: `<div class="pin fade-out" style="color:${color}">${svgs.pin}</div>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 30]
+      });
+    }
+
+    // =========================
+    // HELPERS
+    // =========================
+    function lerp(a, b, t) { return a + (b - a) * t; }
+
+    // approximate distance to allocate time across many points
+    function distApproxMeters(a, b) {
+      const R = 6371000;
+      const lat1 = a[0] * Math.PI/180, lat2 = b[0] * Math.PI/180;
+      const dLat = (b[0] - a[0]) * Math.PI/180;
+      const dLng = (b[1] - a[1]) * Math.PI/180;
+      const x = dLng * Math.cos((lat1 + lat2) / 2);
+      const y = dLat;
+      return Math.sqrt(x*x + y*y) * R;
+    }
+
+    function bearingDeg(from, to) {
+      const lat1 = from[0] * Math.PI / 180;
+      const lat2 = to[0] * Math.PI / 180;
+      const dLon = (to[1] - from[1]) * Math.PI / 180;
+      const y = Math.sin(dLon) * Math.cos(lat2);
+      const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+      let brng = Math.atan2(y, x) * 180 / Math.PI;
+      return (brng + 360) % 360;
+    }
+
+    // Rotate ONLY for flights (fly). All other modes: no directional rotation.
+    function setMoverRotationForType(mover, type, deg) {
+      const el = mover.getElement();
+      if (!el) return;
+      const svg = el.querySelector('svg.rot');
+      if (!svg) return;
+
+      if (ROTATE_FLIGHTS && type === "fly") {
+        svg.style.transform = `rotate(${deg}deg)`;
+      } else {
+        svg.style.transform = "";
+      }
+    }
+
+    // =========================
+    // MAIN
+    // =========================
+    ;(async function main() {
+      const res = await fetch(TRAVELLOG_URL, { cache: 'no-store' });
+      if (!res.ok) {
+        alert('Could not load travellog.json. Run a local server (python3 -m http.server).');
+        return;
+      }
+      const script = await res.json();
+
+      const start = (script[0]?.locations?.[0]) || script[0]?.location || [0,0];
+
+      const map = L.map('map', { zoomControl: true }).setView(start, script[0]?.zoomLevel ?? 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
+
+      // Start centered on the first step (no fitBounds)
+      if (script[0]?.type === "waypoint") {
+        map.setView(script[0].location, script[0].zoomLevel ?? 6, { animate: false });
+      } else if (script[0]?.locations?.[0]) {
+        map.setView(script[0].locations[0], script[0].zoomLevel ?? 6, { animate: false });
+      }
+
+      // Vehicle marker
+      const mover = L.marker(start, { icon: makeTravelIcon("fly", "#ffffff") }).addTo(map);
+
+      function showMover(show) {
+        const el = mover.getElement();
+        if (!el) return;
+        el.style.display = show ? "" : "none";
+      }
+
+      function focus(latlng, zoomLevel) {
+        if (typeof zoomLevel === "number") {
+          map.setView(latlng, zoomLevel, { animate: true, duration: PAN_DURATION_SEC });
+        } else {
+          map.panTo(latlng, { animate: true, duration: PAN_DURATION_SEC });
+        }
+      }
+
+      function newLine(color, startLatLng) {
+        // start with 2 points so first segment is visible immediately
+        return L.polyline([startLatLng, startLatLng], {
+          weight: LINE_WEIGHT,
+          opacity: 0.95,
+          color: color || "#ffffff"
+        }).addTo(map);
+      }
+
+      // -------------------------
+      // Engine
+      // -------------------------
+      let stepIndex = 0;
+      let lastLocked = start;
+
+      let travel = null;
+
+      function beginWaypoint(item) {
+        showMover(false);
+
+        const loc = item.location;
+        focus(loc, item.zoomLevel);
+
+        lastLocked = loc;
+        mover.setLatLng(loc);
+
+        const color = item.pathColor || "#ffffff";
+        const pin = L.marker(loc, { icon: makePinIcon(color) }).addTo(map);
+
+        if (item.name) {
+          pin.bindTooltip(item.name, {
+            permanent: true,
+            direction: "right",
+            offset: [10, 0],
+            className: "wp-label"
+          }).openTooltip();
+        }
+
+        const holdMs = typeof item.animationLength === "number" ? item.animationLength : 0;
+
+        setTimeout(() => {
+          const fadeMs = typeof item.fadeOutMs === "number" ? item.fadeOutMs : 1000;
+          const el = pin.getElement();
+          if (el) el.style.transition = `opacity ${Math.max(0, fadeMs)}ms linear`;
+
+          requestAnimationFrame(() => {
+            const el2 = pin.getElement();
+            if (el2) el2.classList.add("hidden");
+          });
+
+          setTimeout(() => map.removeLayer(pin), fadeMs + 50);
+
+          stepIndex += 1;
+          runNext();
+        }, Math.max(0, holdMs));
+      }
+
+      function beginTravel(item) {
+        const type = item.type;
+        const color = item.pathColor || "#ffffff";
+
+        showMover(true);
+        mover.setIcon(makeTravelIcon(type, color));
+
+        const pts = Array.isArray(item.locations) ? item.locations.slice() : [];
+        if (pts.length < 2) {
+          stepIndex += 1;
+          runNext();
+          return;
+        }
+
+        // Snap to first point if needed
+        if (lastLocked[0] !== pts[0][0] || lastLocked[1] !== pts[0][1]) {
+          lastLocked = pts[0];
+          mover.setLatLng(lastLocked);
+        }
+
+        // Reset rotation state when switching types
+        setMoverRotationForType(mover, type, 0);
+
+        focus(lastLocked, item.zoomLevel);
+
+        // Allocate time across ALL segments based on distance
+        const segLens = [];
+        let total = 0;
+        for (let i = 0; i < pts.length - 1; i++) {
+          const d = distApproxMeters(pts[i], pts[i+1]);
+          segLens.push(d);
+          total += d;
+        }
+        if (total <= 0) total = pts.length - 1;
+
+        const totalMs = typeof item.animationLength === "number" ? item.animationLength : 2000;
+        const segDurMs = segLens.map(d => (d / total) * totalMs);
+
+        const line = newLine(color, pts[0]);
+
+        travel = {
+          item,
+          type,
+          pts,
+          segDurMs,
+          segIdx: 0,
+          segStartTime: 0,
+          line,
+          fixed: [pts[0]],      // completed points
+          tip: pts[0],          // moving tip
+          lastForBearing: pts[0]
+        };
+
+        // initial draw
+        travel.line.setLatLngs([travel.fixed[0], travel.tip]);
+        requestAnimationFrame(tickTravel);
+      }
+
+      function tickTravel(now) {
+        if (!travel) return;
+
+        if (!travel.segStartTime) travel.segStartTime = now;
+
+        const i = travel.segIdx;
+        const a = travel.pts[i];
+        const b = travel.pts[i + 1];
+
+        const segMs = Math.max(1, travel.segDurMs[i] ?? 1);
+        const t = Math.min(1, (now - travel.segStartTime) / segMs);
+
+        const current = [
+          lerp(a[0], b[0], t),
+          lerp(a[1], b[1], t)
+        ];
+
+        travel.tip = current;
+
+        travel.line.setLatLngs(travel.fixed.concat([travel.tip]));
+        mover.setLatLng(current);
+
+        const brng = bearingDeg(travel.lastForBearing, current);
+        setMoverRotationForType(mover, travel.type, brng);
+        travel.lastForBearing = current;
+
+        focus(current, travel.item.zoomLevel);
+
+        if (t >= 1) {
+          travel.fixed.push(b);
+          travel.tip = b;
+          travel.line.setLatLngs(travel.fixed.concat([travel.tip]));
+
+          travel.segIdx += 1;
+
+          if (travel.segIdx >= travel.pts.length - 1) {
+            lastLocked = travel.pts[travel.pts.length - 1];
+            mover.setLatLng(lastLocked);
+
+            travel = null;
+            stepIndex += 1;
+            runNext();
+            return;
+          }
+
+          travel.segStartTime = now;
+          travel.lastForBearing = b;
+        }
+
+        requestAnimationFrame(tickTravel);
+      }
+
+      function runNext() {
+        if (stepIndex >= script.length) return;
+        const item = script[stepIndex];
+        if (item.type === "waypoint") beginWaypoint(item);
+        else beginTravel(item);
+      }
+
+      map.whenReady(() => runNext());
+    })();
+  </script>
+</body>
+</html>
